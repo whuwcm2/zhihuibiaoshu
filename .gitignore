@@ -9,5 +9,13 @@ wheels/
 # Virtual environments
 .venv
 
-# npm cache
+# Secrets
+.env
+
+# Node
+frontend/node_modules/
+
+# Runtime data
 .npm-cache
+chroma_db/
+data/parsed/

@@ -12,10 +12,12 @@ dependencies = [
     "celery>=5.7.0",
     "chromadb>=1.5.9",
     "fastapi>=0.162.0",
+    "httpx>=0.28.1",
     "langgraph>=1.2.20",
     "openai>=3.46.0",
     "pymupdf>=2.1",
     "python-docx>=1.2.0",
+    "python-dotenv>=1.2.4",
     "redis>=8.1.0",
     "sqlalchemy>=2.0",
     "uvicorn[standard]>=0.54.0",
@@ -23,7 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
-zhibiao = "zhibiao:main"
+zhibiao = "zhibiao.cli:main"
 
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
