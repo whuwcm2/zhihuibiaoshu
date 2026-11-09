@@ -246,17 +246,52 @@ def test_ingest_full_and_search(settings, make_pdf, tmp_path, monkeypatch, capsy
     assert store_calls and store_calls[0]["doc_id"] == "doc-1"
     assert store_calls[0]["parser"] == "mineru"
 
-    result = pipeline.search("投标保证金", settings)
-    assert result["documents"] == [["内容"]]
-    assert "章节" in capsys.readouterr().out
-
-    class EmptyStore:
+    class FakeRetriever:
         def __init__(self, *args, **kwargs):
             pass
 
-        def count(self):
-            return 0
+        def search(self, query, n_results=5, intent=None):
+            return {
+                "query": query,
+                "intent": "general",
+                "strategy": {},
+                "candidate_count": 1,
+                "took_ms": 1,
+                "results": [
+                    {
+                        "id": "doc-1:00000",
+                        "doc_id": "doc-1",
+                        "text": "内容",
+                        "snippet": "内容",
+                        "heading": "章节",
+                        "page_start": 1,
+                        "page_end": 2,
+                        "source": "doc.pdf",
+                        "type": "text",
+                        "table_id": "",
+                        "tags": [],
+                        "score": 0.9,
+                        "keyword_score": 0.8,
+                        "vector_score": 0.7,
+                        "forced": False,
+                        "reasons": ["bm25", "vector"],
+                    }
+                ],
+            }
 
-    monkeypatch.setattr(pipeline, "ChunkStore", EmptyStore)
+    monkeypatch.setattr(pipeline, "HybridRetriever", FakeRetriever)
+
+    result = pipeline.search("投标保证金", settings)
+    assert result["results"][0]["heading"] == "章节"
+    assert "章节" in capsys.readouterr().out
+
+    class EmptyRetriever:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def search(self, query, n_results=5, intent=None):
+            raise RuntimeError("向量库为空，请先执行 ingest")
+
+    monkeypatch.setattr(pipeline, "HybridRetriever", EmptyRetriever)
     with pytest.raises(RuntimeError, match="向量库为空"):
         pipeline.search("q", settings)

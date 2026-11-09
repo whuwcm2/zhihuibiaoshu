@@ -32,6 +32,7 @@ from zhibiao.company import Company
 from zhibiao.config import PROJECT_ROOT, get_settings
 from zhibiao.db_models import Document, Task
 from zhibiao.pipeline import sha1_file
+from zhibiao.retrieval import HybridRetriever
 from zhibiao.tasks import parse_pdf_task, write_bid_task
 
 from .schemas import (
@@ -47,6 +48,8 @@ from .schemas import (
     ParseJobCreated,
     ParseJobStatus,
     ParseResult,
+    SearchIntent,
+    SearchResponse,
     TaskHistoryItem,
 )
 
@@ -77,6 +80,27 @@ def health() -> dict:
         "service": "zhibiao-api",
         "redis": redis_ok,
     }
+
+
+@router.get("/search", response_model=SearchResponse)
+def search_chunks(
+    q: str = Query(..., min_length=1, max_length=500),
+    n_results: int = Query(default=5, ge=1, le=20),
+    intent: SearchIntent | None = Query(default=None),
+) -> dict:
+    query = q.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="查询不能为空")
+    try:
+        return HybridRetriever(get_settings()).search(
+            query, n_results=n_results, intent=intent
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - 外部检索依赖失败
+        raise HTTPException(status_code=502, detail=f"检索失败: {exc}") from exc
 
 
 async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:

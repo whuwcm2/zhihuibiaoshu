@@ -46,20 +46,29 @@ class ZhipuEmbedder:
         return vectors
 
     @traceable(name="zhipu.embed_query", run_type="embedding")
-    def embed_query(self, query: str) -> list[float]:
-        return self._embed_batch([self._prepare(query)])[0]
+    def embed_query(
+        self, query: str, dimensions: int | None = None
+    ) -> list[float]:
+        return self._embed_batch(
+            [self._prepare(query)], dimensions=dimensions
+        )[0]
 
     @staticmethod
     def _prepare(text: str) -> str:
         cleaned = text.strip()
         return cleaned[:MAX_INPUT_CHARS] if len(cleaned) > MAX_INPUT_CHARS else cleaned
 
-    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+    def _embed_batch(
+        self, texts: list[str], dimensions: int | None = None
+    ) -> list[list[float]]:
         last_error: Exception | None = None
+        requested_dimensions = (
+            self.dimensions if dimensions is None else dimensions
+        )
         for attempt in range(4):
             kwargs: dict = {"model": self.model, "input": texts}
-            if self.dimensions is not None:
-                kwargs["dimensions"] = self.dimensions
+            if requested_dimensions is not None:
+                kwargs["dimensions"] = requested_dimensions
             try:
                 response = self.client.embeddings.create(**kwargs)
                 items = sorted(response.data, key=lambda item: getattr(item, "index", 0))
@@ -71,13 +80,15 @@ class ZhipuEmbedder:
                 return vectors
             except Exception as exc:  # noqa: BLE001 - SDK 异常类型较杂
                 message = str(exc).lower()
-                if self.dimensions is not None and "dimension" in message:
+                if requested_dimensions is not None and "dimension" in message:
                     print(
-                        f"[warn] embedding-3 不支持 dimensions={self.dimensions}，"
+                        f"[warn] embedding-3 不支持 dimensions={requested_dimensions}，"
                         "改用模型默认维度",
                         flush=True,
                     )
-                    self.dimensions = None
+                    requested_dimensions = None
+                    if dimensions is None:
+                        self.dimensions = None
                     continue
                 status = getattr(exc, "status_code", None)
                 if status in (401, 403):

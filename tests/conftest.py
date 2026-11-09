@@ -29,6 +29,11 @@ def _disable_database(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "")
 
 
+@pytest.fixture(autouse=True)
+def _disable_search_warmup(monkeypatch):
+    monkeypatch.setenv("SEARCH_WARMUP", "false")
+
+
 @pytest.fixture
 def db_path(tmp_path: Path, monkeypatch) -> Path:
     path = tmp_path / "zhibiao-test.db"

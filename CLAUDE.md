@@ -20,7 +20,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `--dry-run`：只解析和分块，不调用 embedding、不写库
   - `--reparse`：忽略 `data/parsed/` 缓存重新解析
   - `--max-chars` / `--overlap` / `--collection`：覆盖分块与集合配置
-- `uv run zhibiao search "投标保证金是多少" -n 5` — 语义检索已入库片段
+- `uv run zhibiao search "投标保证金是多少" -n 5` — 混合检索已入库片段（BM25 + 向量）；`--intent` 可覆盖自动意图识别
+- `uv run zhibiao reindex-metadata` — 为已有 Chroma 片段回填 `type`/`table_id`/`tags`/`qualification` 元数据（不重新 embedding）
 - `uv run zhibiao extract <pdf>` — 用 DeepSeek 结构化抽取：项目概况、评标办法（评审因素/分值/评分标准）、投标人须知前附表、资格审查条件、第八章格式清单、关键时间节点；输出 `extraction.json` 和 `extraction.md` 到解析缓存目录（`--output-dir` 可覆盖，`--refresh` 忽略分片缓存重新调用 LLM）
 - `uv run python -m src.cli write <doc_id>` — 用 LangGraph 多 Agent 生成投标文件（Markdown + Word）。输入 `bidder_profile.json`，缺失字段一律写【待填写】；产物写入 `data/bids/<doc_id>/`（`bid.md`、`bid.docx`、`agent_outputs/`、`bid_meta.json`）
   - `--profile <path>` 指定投标人资料；`--output-dir` 指定产物目录；`--no-docx` 只生成 Markdown
@@ -29,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `uv run alembic check` — 校验 SQLAlchemy 模型与迁移脚本是否一致
 - `uv run alembic revision --autogenerate -m "..."` — 修改 `db_models.py` 后生成新迁移
 - `uv run python -m src.cli sync-documents` — 一次性把现有 `data/parsed`/`upload/parsed` 文档回填到 `documents`/`projects` 表
-- `uv run pytest` — 全量测试（99 个用例，7 秒左右跑完；网络调用全部 mock，API 测试使用临时 SQLite，测试内强制关闭 LangSmith tracing / Prompt Hub）
+- `uv run pytest` — 全量测试（117 个用例，7 秒左右跑完；网络调用全部 mock，API 测试使用临时 SQLite，测试内强制关闭 LangSmith tracing / Prompt Hub / 搜索预热）
 - 单个测试：`uv run pytest tests/test_chunker.py::test_split_long_text_boundaries -v`
 - `zhibiao` 命令退出码：成功 0，业务/配置异常 1，argparse 参数错误 2
 
@@ -48,14 +49,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 入口 `src/zhibiao/cli.py` → `pipeline.py`，各模块职责：
 
 1. **`mineru.py`**：MinerU 云端精准解析 API。本地 PDF 通过 `/api/v4/file-urls/batch` 申请上传链接、PUT 上传、轮询 `/api/v4/extract-results/batch/{batch_id}`、下载结果 zip。单文件上限 200 页，`split_pdf()` 会用 PyMuPDF 在本地切成多个 ≤200 页的分片后批量上传；每个分片记录 `page_offset`，用于把分片内 `page_idx` 还原成全局页码。
-2. **`content_list.py`**：把 MinerU 的 `*_content_list.json` 转成 `Block`（Markdown 文本 + 1-based 全局页码 + 标题层级），表格先保留 HTML、公式用 `$$` 包裹、图片保留图注。`blocks_from_markdown()` 用于 content_list 缺失时降级。
+2. **`content_list.py`**：把 MinerU 的 `*_content_list.json` 转成 `Block`（Markdown 文本 + 1-based 全局页码 + 标题层级），表格保留 HTML 并分配稳定 `table_id`（如 `table-p12-001`），公式用 `$$` 包裹、图片保留图注。`blocks_from_markdown()` 用于 content_list 缺失时降级，也会识别 HTML table 并打标。
 3. **`fallback.py`**：MinerU 失败时用 PyMuPDF 逐页提取文本生成 Markdown，并按页生成 `Block`。若文本中替换字符（�）比例高会警告——该 PDF 的字体可能缺少 ToUnicode 映射，此时 PyMuPDF 结果会乱码。
-4. **`chunker.py`**：按 Markdown 标题（一级/二级标题切段）和长度（默认 1000 字符、重叠 120）切块；超长块按句末标点/换行切分；表格 HTML 会先转成管道分隔的纯文本（`html_table_to_text()`）以减少 embedding 噪声；块保留 `page_start`/`page_end`/`heading`，续块会加 `【章节】...` 上下文前缀。
+4. **`chunker.py`**：按 Markdown 标题（一级/二级标题切段）和长度（默认 1000 字符、重叠 120）切块；超长块按句末标点/换行切分；每个表格块独立成 chunk（不与正文合并，小表格也不参与 `_merge_small`），`Chunk.table_id` 保留表格标识；表格 HTML 会转成管道分隔纯文本以减少 embedding 噪声；块保留 `page_start`/`page_end`/`heading`，续块会加 `【章节】...` 上下文前缀。
 5. **`embedder.py`**：智谱 `embedding-3` 批量嵌入（默认每批 32 条、4 次指数退避重试；维度参数被拒时自动降级为模型默认维度）。
 6. **`store.py`**：Chroma `PersistentClient`，集合 `bid_documents`（cosine），以 `doc_id` 为单位先删后写保证幂等；片段 ID 为 `<doc_id>:<序号>`，metadata 含来源文件、页码、章节、解析器。
 7. **`pipeline.py`**：编排解析 → 分块 → 嵌入 → 入库；解析结果缓存在 `data/parsed/<doc_id>/`（`manifest.json`、`blocks.json`、`chunks.jsonl`、MinerU 原始输出与 `mineru_full.md`），再次入库默认复用缓存。
 8. **`extractor.py`**：基于 `blocks.json` 和 DeepSeek JSON 模式做结构化抽取，按页构建带 `[PDF p.X]` 标记的上下文，六类抽取分别独立调用 LLM；超长表格（前附表、评分表）按行/页拆成多次调用后合并，避免输出截断。结果写入 `data/parsed/<doc_id>/extraction.json` 与 `extraction.md`，各分片缓存位于 `extraction_parts/`。提示词要求逐条附页码、全量不合并，并明确禁止编造。`check_provenance()` 会核对每个带页码抽取项的页码是否存在、quote 能否在对应页原文中找到，结果写入 `provenance_warnings` 并渲染为报告末尾的“溯源核对”章节。
 9. **`toc.py`**：`parse_toc()` 解析“标题.... 页码”形式的目录行并按章/节/条目标注层级；`toc_from_blocks()` 从解析缓存前 10 页提取目录，`extract` 会把结果写入 `extraction.json` 的 `toc` 字段并在 Markdown 中输出目录表。
+
+### 混合检索与意图识别
+
+- `src/zhibiao/metadata.py`：根据 heading/text 推断 `tags`（`资格审查`、`计算公式`、`章节写法`），统一生成 `type`（table/text）、`table_id`、`qualification` 元数据；旧 collection 缺少标签时用 `normalize_metadata()` 兜底。
+- `src/zhibiao/store.py`：`replace_document()` 写入上述 metadata；`all_chunks()` 可读取 documents/metadatas/embeddings 供 BM25 与向量扫描；`backfill_metadata()` 只回填旧片段元数据，不重新分块/嵌入。
+- `src/zhibiao/retrieval.py`：
+  - `detect_intent()` 规则识别 `formula`（计算公式）、`section_writing`（章节写法）、`qualification`（资格材料）、`general`。
+  - 中文按字符 bigram、英文/数字按单词分词，构建自实现 BM25。
+  - `HybridRetriever` 先用 BM25 召回全部片段、表格片段（type=table）和章节标题（heading），再用向量分数补充，用 RRF 融合；表格/标题权重随意图调整。
+  - `qualification` 意图会强制召回带 `资格审查` 标签的块（至少前一半结果），其余用融合结果补齐。
+  - 向量检索读取 Chroma 已存 embedding 做余弦扫描；对 1024 维 collection 使用 768 维查询向量（智谱 768 维是 1024 维前缀，避免 1024 维请求的长冷启动），查询向量按前缀做余弦。
+  - embedding client 在进程内缓存并串行化；FastAPI 启动时后台预热（`SEARCH_WARMUP=false` 可关闭）。
+- `pipeline.search()` 调用 `HybridRetriever`，CLI `zhibiao search` 会打印 intent、type、tags、table_id、页码和分数。
+- 旧 collection 执行 `uv run zhibiao reindex-metadata` 后即可获得新标签；旧表格块的 `table_id` 为 `legacy-<chunk_id>`。要获得真正的独立表格 chunk 和正式 `table_id`，需要重新执行 ingest（会重新 embedding）。
 
 ### 投标文件生成（LangGraph 多 Agent）
 
@@ -105,6 +120,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 启动 worker（Windows 必须 `--pool=solo`）：`uv run celery -A zhibiao.tasks.celery_app worker --loglevel=info --pool=solo --concurrency=1`
 - 启动 API：`uv run uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload`，Swagger 在 `/docs`
 - `GET /api/health` — 健康检查（含 Redis 连通性；数据库连通性在启动日志中检查）
+- `GET /api/search` — 混合检索：`q`、`n_results`（1–20）、可选 `intent=formula|section_writing|qualification|general`；返回 `intent`、`strategy`、`candidate_count`、`took_ms` 和结果（`type`/`table_id`/`tags`/`score`/`keyword_score`/`vector_score`/`forced`/`reasons`）
 - `POST /api/parse` — multipart 上传 PDF（`file`、`parser=auto|mineru|pymupdf`，可选 `extract=true` 结构化抽取、`ingest=true` 向量入库）；先写入 `tasks`（pending），再投递 Celery，返回 `202` + `job_id`
 - `GET /api/parse/{job_id}` — 查询 `tasks` 表；返回 `status`/`stage`（parsing/extracting/embedding）/时间戳/`result`/`error`
 - `POST /api/bids` — JSON `{doc_id, profile?, company_id?, export_docx?}`；`profile`、`company_id` 二选一，都为空时使用服务端 `bidder_profile.json`；`company_id` 从 `companies` 表读取；先写 `tasks` 再投递 `bidding.write_bid`
@@ -137,7 +153,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 测试覆盖
 
-`tests/` 使用 pytest，网络调用全部 mock（MinerU 的 `httpx`、DeepSeek 的 OpenAI client、智谱的 `ZhipuAiClient`、Chroma 客户端、Celery 投递），PyMuPDF 用临时生成的小 PDF。API/数据库测试使用临时 SQLite（`sqlite+aiosqlite:///...`），每个测试独立建表；任务测试默认禁用数据库回写。覆盖：TOC 解析、PDF 200 页分片、章节感知分块、表格清洗、抽取 schema 容错、JSON 解析（含代码围栏）、分片合并去重、页码/引用溯源核对、缓存复用、CLI 退出码、FastAPI 上传/任务状态映射/Celery 任务封装、数据库文档列表、任务历史与状态查询、公司信息 CRUD 与投标资料引用、投标人资料占位符、LangGraph 多 Agent 产物、评分覆盖报告、Markdown→Word 导出，以及 MinerU/DeepSeek/智谱/Chroma 的错误与重试路径。
+`tests/` 使用 pytest，网络调用全部 mock（MinerU 的 `httpx`、DeepSeek 的 OpenAI client、智谱的 `ZhipuAiClient`、Chroma 客户端、Celery 投递），PyMuPDF 用临时生成的小 PDF。API/数据库测试使用临时 SQLite（`sqlite+aiosqlite:///...`），每个测试独立建表；任务测试默认禁用数据库回写。覆盖：TOC 解析、PDF 200 页分片、章节感知分块、表格独立分块与 `table_id`、HTML 表格标签、抽取 schema 容错、JSON 解析（含代码围栏）、分片合并去重、页码/引用溯源核对、缓存复用、CLI 退出码、BM25/意图识别/表格与标题优先召回/资格审查强制召回/向量补充、FastAPI 搜索接口、上传/任务状态映射/Celery 任务封装、数据库文档列表、任务历史与状态查询、公司信息 CRUD 与投标资料引用、投标人资料占位符、LangGraph 多 Agent 产物、评分覆盖报告、Markdown→Word 导出，以及 MinerU/DeepSeek/智谱/Chroma 的错误与重试路径。
 
 ### 前端 / Electron
 
@@ -150,7 +166,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 配置与环境
 
-- 根目录 `.env` 保存密钥与运行配置（已 gitignore、已从 git 索引移除）。关键项：`LLM_PROVIDER=deepseek`、`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`ZHIPU_API_KEY`、`EMBEDDING_MODEL=embedding-3`、`EMBEDDING_DIMENSIONS=1024`、`CHROMA_DIR=./chroma_db`、`MINERU_MODE=cloud`、`MINERU_API_KEY`、`MINERU_ENDPOINT`、`MINERU_MODEL_VERSION=vlm`、`MINERU_MAX_POLLS`、`LANGSMITH_TRACING`、`LANGSMITH_API_KEY`、`LANGSMITH_PROJECT=zhibiao`、`LANGSMITH_PROMPT_HUB`、`DATABASE_URL`（`postgresql+asyncpg://...`，当前数据库 `bidding`）。禁止把 `.env` 提交到 git。
+- 根目录 `.env` 保存密钥与运行配置（已 gitignore、已从 git 索引移除）。关键项：`LLM_PROVIDER=deepseek`、`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`ZHIPU_API_KEY`、`EMBEDDING_MODEL=embedding-3`、`EMBEDDING_DIMENSIONS=1024`、`CHROMA_DIR=./chroma_db`、`MINERU_MODE=cloud`、`MINERU_API_KEY`、`MINERU_ENDPOINT`、`MINERU_MODEL_VERSION=vlm`、`MINERU_MAX_POLLS`、`LANGSMITH_TRACING`、`LANGSMITH_API_KEY`、`LANGSMITH_PROJECT=zhibiao`、`LANGSMITH_PROMPT_HUB`、`DATABASE_URL`（`postgresql+asyncpg://...`，当前数据库 `bidding`）、`SEARCH_WARMUP`（默认 `true`，API 启动时后台预热 embedding client）。禁止把 `.env` 提交到 git。
 - PostgreSQL schema 由 Alembic 管理：`uv run alembic upgrade head` 建表/升级；`uv run alembic check` 校验模型与迁移是否一致。本机现有 `bidding` 库已将 `companies` 基线标记为 `0001`，并升级到 `0002`。
 - 运行时数据目录（均已 gitignore）：`chroma_db/`（向量库）、`data/parsed/`（解析缓存）、`upload/files/`（待解析 PDF，目前未忽略）。
 - MinerU 精准解析是异步任务，200 页文档轮询可能需要 10–30 分钟；`MINERU_MAX_POLLS=360`（×5 秒）为轮询上限。

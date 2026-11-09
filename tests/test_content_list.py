@@ -19,6 +19,8 @@ def test_text_table_equation_blocks_with_pages():
     assert blocks[0].page == 11
     assert blocks[0].level == 1
     assert blocks[1].page == 12
+    assert blocks[1].type == "table"
+    assert blocks[1].table_id == "table-p12-001"
     assert "表1 项目概况" in blocks[1].text
     assert blocks[2].page == 13
     assert blocks[2].type == "equation"
@@ -56,3 +58,17 @@ def test_markdown_blocks_and_join():
     assert _join(" a ") == "a"
     assert _join(["a", " b "]) == "a b"
     assert _join(None) == ""
+
+
+def test_markdown_html_table_is_tagged():
+    markdown = (
+        "## 资格审查\n\n"
+        "<table><tr><td>营业执照</td></tr></table>\n\n"
+        "正文"
+    )
+    blocks = blocks_from_markdown(markdown, page_start=3)
+
+    table = next(block for block in blocks if block.type == "table")
+    assert table.table_id == "table-p3-001"
+    assert "<table>" in table.text
+    assert all(block.type != "heading" or block.text == "资格审查" for block in blocks)

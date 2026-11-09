@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import get_settings
 from .extractor import extract_document
 from .pipeline import ingest_pdf, search
+from .store import ChunkStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,10 +27,21 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--overlap", type=int, default=None, help="相邻片段重叠字符数")
     ingest.add_argument("--collection", default=None, help="覆盖 Chroma collection 名称")
 
-    search = sub.add_parser("search", help="语义检索已入库片段")
+    search = sub.add_parser("search", help="混合检索已入库片段（BM25 + 向量）")
     search.add_argument("query", help="检索问题")
     search.add_argument("-n", "--n-results", type=int, default=5, help="返回条数")
+    search.add_argument(
+        "--intent",
+        choices=["formula", "section_writing", "qualification", "general"],
+        default=None,
+        help="覆盖自动意图识别",
+    )
     search.add_argument("--collection", default=None, help="覆盖 Chroma collection 名称")
+
+    reindex = sub.add_parser(
+        "reindex-metadata", help="为已有 Chroma 片段回填 type/table_id/tags 元数据"
+    )
+    reindex.add_argument("--collection", default=None, help="覆盖 Chroma collection 名称")
 
     extract = sub.add_parser(
         "extract",
@@ -60,7 +72,18 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
             )
         elif args.command == "search":
-            search(args.query, settings, n_results=args.n_results)
+            if args.intent:
+                search(
+                    args.query,
+                    settings,
+                    n_results=args.n_results,
+                    intent=args.intent,
+                )
+            else:
+                search(args.query, settings, n_results=args.n_results)
+        elif args.command == "reindex-metadata":
+            count = ChunkStore(settings.chroma_dir, settings.chroma_collection).backfill_metadata()
+            print(f"已回填 {count} 个片段的检索元数据", flush=True)
         elif args.command == "extract":
             extract_document(
                 Path(args.pdf), settings, output_dir=args.output_dir, refresh=args.refresh

@@ -63,6 +63,16 @@ def test_embed_documents_batches_and_progress(monkeypatch):
     assert calls[-1]["input"] == ["查询"]
 
 
+def test_embed_query_dimension_override_is_temporary(monkeypatch):
+    calls = []
+    install_fake_client(monkeypatch, [[[0.1] * 768]], calls)
+    embedder = ZhipuEmbedder("key", dimensions=1024)
+
+    assert len(embedder.embed_query("x", dimensions=768)) == 768
+    assert calls[0]["dimensions"] == 768
+    assert embedder.dimensions == 1024
+
+
 def test_dimension_fallback(monkeypatch):
     calls = []
     install_fake_client(

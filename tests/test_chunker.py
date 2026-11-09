@@ -85,3 +85,55 @@ def test_small_chunks_merged_and_empty_text_dropped():
     assert "小" in merged[0].text
     assert merged[0].page_end == 2
     assert chunk_blocks([Block(" ", page=1)], max_chars=100) == []
+
+
+def test_table_blocks_become_independent_chunks_with_table_id():
+    blocks = [
+        Block("第七章 资格审查", page=3, type="heading", level=1),
+        Block(
+            "<table><tr><td>营业执照</td><td>有效</td></tr></table>",
+            page=3,
+            type="table",
+            table_id="table-p3-001",
+        ),
+        Block("正文" * 40, page=3),
+    ]
+
+    chunks = chunk_blocks(blocks, max_chars=500, overlap=20, min_chars=40)
+    table_chunks = [chunk for chunk in chunks if chunk.table_id]
+
+    assert len(table_chunks) == 1
+    assert table_chunks[0].table_id == "table-p3-001"
+    assert table_chunks[0].block_types == "table"
+    assert "营业执照" in table_chunks[0].text
+    assert "【章节】第七章 资格审查" in table_chunks[0].text
+    assert all("正文" not in chunk.text for chunk in table_chunks)
+
+
+def test_long_table_split_keeps_table_id():
+    blocks = [
+        Block(
+            "<table>" + "<tr><td>资格条款</td></tr>" * 80 + "</table>",
+            page=2,
+            type="table",
+            table_id="table-p2-009",
+        )
+    ]
+
+    chunks = chunk_blocks(blocks, max_chars=120, overlap=0)
+
+    assert len(chunks) > 1
+    assert all(chunk.table_id == "table-p2-009" for chunk in chunks)
+    assert all(chunk.block_types == "table" for chunk in chunks)
+
+
+def test_small_table_not_merged_into_text():
+    chunks = [
+        Chunk("正文" * 20, page_start=1, page_end=1),
+        Chunk("短表", page_start=2, page_end=2, block_types="table", table_id="t1"),
+    ]
+
+    merged = _merge_small(chunks, min_chars=40)
+
+    assert len(merged) == 2
+    assert merged[1].table_id == "t1"

@@ -67,9 +67,30 @@ class _SectionChunker:
 
     def add(self, block: Block) -> None:
         if block.type == "table":
-            cleaned = html_table_to_text(block.text)
-            if cleaned != block.text:
-                block = Block(text=cleaned, page=block.page, type=block.type, level=block.level)
+            # 表格独立成块，避免与正文合并后丢失 table_id/type 元数据
+            self.flush()
+            cleaned = html_table_to_text(block.text).strip()
+            if not cleaned:
+                return
+            table_id = block.table_id or f"table-p{block.page}-legacy"
+            for piece in split_long_text(cleaned, self.max_chars, self.overlap):
+                if not piece.strip():
+                    continue
+                self.chunks.append(
+                    self._make_chunk(
+                        [
+                            Block(
+                                text=piece,
+                                page=block.page,
+                                type="table",
+                                level=block.level,
+                                table_id=table_id,
+                            )
+                        ],
+                        table_id=table_id,
+                    )
+                )
+            return
 
         if block.level > 0:
             if block.level <= self.split_level and self.buffer:
@@ -108,7 +129,12 @@ class _SectionChunker:
     def _heading_path(self) -> str:
         return " > ".join(title for _, title in self.headings if title)
 
-    def _make_chunk(self, blocks: list[Block], text: str | None = None) -> Chunk:
+    def _make_chunk(
+        self,
+        blocks: list[Block],
+        text: str | None = None,
+        table_id: str = "",
+    ) -> Chunk:
         body = text if text is not None else "\n\n".join(
             item.text.strip() for item in blocks if item.text.strip()
         )
@@ -118,19 +144,28 @@ class _SectionChunker:
             body = f"【章节】{heading}\n\n{body}"
 
         pages = [item.page for item in blocks]
+        if not table_id:
+            table_id = next((item.table_id for item in blocks if item.table_id), "")
         return Chunk(
             text=body.strip(),
             page_start=min(pages),
             page_end=max(pages),
             heading=heading,
             block_types=",".join(sorted({item.type for item in blocks})),
+            table_id=table_id,
         )
 
 
 def _merge_small(chunks: list[Chunk], min_chars: int) -> list[Chunk]:
     merged: list[Chunk] = []
     for chunk in chunks:
-        if merged and len(chunk.text) < min_chars:
+        can_merge = (
+            merged
+            and len(chunk.text) < min_chars
+            and not chunk.table_id
+            and not merged[-1].table_id
+        )
+        if can_merge:
             previous = merged[-1]
             previous.text = f"{previous.text}\n\n{chunk.text}".strip()
             previous.page_end = max(previous.page_end, chunk.page_end)

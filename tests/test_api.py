@@ -351,3 +351,67 @@ def test_task_history(db_client, db_run):
 
     filtered = db_client.get("/api/tasks", params={"task_type": "write_bid"})
     assert [item["id"] for item in filtered.json()] == ["bid-job"]
+
+
+def test_search_endpoint(db_client, monkeypatch):
+    class FakeRetriever:
+        def __init__(self, settings):
+            pass
+
+        def search(self, query, n_results=5, intent=None):
+            return {
+                "query": query,
+                "intent": intent or "formula",
+                "strategy": {"forced_qualification": 0},
+                "candidate_count": 4,
+                "took_ms": 3,
+                "results": [
+                    {
+                        "id": "doc:00001",
+                        "doc_id": "doc-1",
+                        "text": "投标报价计算公式",
+                        "snippet": "投标报价计算公式",
+                        "heading": "第五章 投标报价",
+                        "page_start": 20,
+                        "page_end": 20,
+                        "source": "a.pdf",
+                        "type": "table",
+                        "table_id": "table-p20-001",
+                        "tags": ["计算公式"],
+                        "score": 0.95,
+                        "keyword_score": 0.9,
+                        "vector_score": 0.7,
+                        "forced": False,
+                        "reasons": ["bm25_table", "vector"],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(routes, "HybridRetriever", FakeRetriever)
+
+    response = db_client.get(
+        "/api/search", params={"q": "投标报价计算公式", "n_results": 2}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "formula"
+    assert body["candidate_count"] == 4
+    assert body["results"][0]["type"] == "table"
+    assert body["results"][0]["table_id"] == "table-p20-001"
+
+
+def test_search_endpoint_empty_index_returns_503(db_client, monkeypatch):
+    class EmptyRetriever:
+        def __init__(self, settings):
+            pass
+
+        def search(self, query, n_results=5, intent=None):
+            raise RuntimeError("向量库为空，请先执行 ingest")
+
+    monkeypatch.setattr(routes, "HybridRetriever", EmptyRetriever)
+
+    response = db_client.get("/api/search", params={"q": "资格审查"})
+
+    assert response.status_code == 503
+    assert "向量库为空" in response.json()["detail"]

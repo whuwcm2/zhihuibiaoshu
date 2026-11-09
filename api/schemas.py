@@ -171,6 +171,37 @@ class TaskHistoryItem(BaseModel):
     error: str | None = None
 
 
+SearchIntent = Literal["formula", "section_writing", "qualification", "general"]
+
+
+class SearchResultItem(BaseModel):
+    id: str
+    doc_id: str | None = None
+    text: str
+    snippet: str
+    heading: str = ""
+    page_start: int = 0
+    page_end: int = 0
+    source: str | None = None
+    type: str = "text"
+    table_id: str = ""
+    tags: list[str] = Field(default_factory=list)
+    score: float = 0.0
+    keyword_score: float = 0.0
+    vector_score: float | None = None
+    forced: bool = False
+    reasons: list[str] = Field(default_factory=list)
+
+
+class SearchResponse(BaseModel):
+    query: str
+    intent: SearchIntent
+    strategy: dict[str, Any] = Field(default_factory=dict)
+    candidate_count: int = 0
+    took_ms: int = 0
+    results: list[SearchResultItem] = Field(default_factory=list)
+
+
 class BidHistoryItem(BaseModel):
     doc_id: str
     project_name: str | None = None

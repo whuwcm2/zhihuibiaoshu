@@ -16,6 +16,7 @@ from .embedder import ZhipuEmbedder
 from .fallback import parse_with_pymupdf
 from .mineru import MinerUCloudParser
 from .models import Block, Chunk
+from .retrieval import HybridRetriever
 from .store import ChunkStore
 
 
@@ -48,6 +49,7 @@ def write_chunks_jsonl(chunks: list[Chunk], path: Path) -> None:
                         "page_end": chunk.page_end,
                         "heading": chunk.heading,
                         "block_types": chunk.block_types,
+                        "table_id": chunk.table_id,
                         "text": chunk.text,
                     },
                     ensure_ascii=False,
@@ -262,30 +264,30 @@ def ingest_pdf(
 
 
 @traceable(name="search", run_type="chain")
-def search(query: str, settings: Settings, n_results: int = 5) -> dict:
-    embedder = ZhipuEmbedder(
-        api_key=settings.zhipu_api_key,
-        model=settings.embedding_model,
-        dimensions=settings.embedding_dimensions,
+def search(
+    query: str,
+    settings: Settings,
+    n_results: int = 5,
+    intent: str | None = None,
+) -> dict:
+    retriever = HybridRetriever(settings)
+    result = retriever.search(query, n_results=n_results, intent=intent)
+    print(
+        f"[search] intent={result['intent']} candidates={result['candidate_count']} "
+        f"took={result['took_ms']}ms",
+        flush=True,
     )
-    store = ChunkStore(settings.chroma_dir, settings.chroma_collection)
-    if store.count() == 0:
-        raise RuntimeError("向量库为空，请先执行 ingest")
-    result = store.query(embedder.embed_query(query), n_results=n_results)
-
-    documents = (result.get("documents") or [[]])[0]
-    metadatas = (result.get("metadatas") or [[]])[0]
-    distances = (result.get("distances") or [[]])[0]
-    for index, (document, metadata, distance) in enumerate(
-        zip(documents, metadatas, distances), start=1
-    ):
-        heading = metadata.get("heading") or "（无章节）"
+    for index, item in enumerate(result["results"], start=1):
+        tags = ",".join(item["tags"]) or "-"
         print(
-            f"\n[{index}] score={1 - float(distance):.4f} "
-            f"pages={metadata.get('page_start')}-{metadata.get('page_end')} "
-            f"source={metadata.get('source')}",
+            f"\n[{index}] score={item['score']:.4f} type={item['type']} "
+            f"tags={tags} "
+            f"pages={item['page_start']}-{item['page_end']} "
+            f"source={item['source']}",
             flush=True,
         )
-        print(f"    章节: {heading}", flush=True)
-        print(f"    内容: {document[:300].replace(chr(10), ' ')}…", flush=True)
+        print(f"    章节: {item['heading'] or '（无章节）'}", flush=True)
+        if item["table_id"]:
+            print(f"    表格: {item['table_id']}", flush=True)
+        print(f"    内容: {item['snippet']}…", flush=True)
     return result

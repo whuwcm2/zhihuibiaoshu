@@ -11,6 +11,7 @@ class Block:
     page: int
     type: str = "text"
     level: int = 0  # >0 表示标题层级，0 表示正文
+    table_id: str = ""
 
 
 @dataclass
@@ -20,3 +21,4 @@ class Chunk:
     page_end: int
     heading: str = ""
     block_types: str = ""
+    table_id: str = ""

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -31,6 +33,22 @@ async def lifespan(app: FastAPI):
             print(f"[db] 数据库连接失败，持久化接口不可用：{exc}", flush=True)
             if engine is not None:
                 await engine.dispose()
+
+    if os.getenv("SEARCH_WARMUP", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        def _warm_search() -> None:
+            try:
+                from zhibiao.retrieval import warm_up_embedder
+
+                warm_up_embedder(settings)
+            except Exception as exc:  # noqa: BLE001 - 预热失败不影响服务
+                print(f"[search] embedding 预热失败：{exc}", flush=True)
+
+        threading.Thread(target=_warm_search, daemon=True).start()
 
     try:
         yield
@@ -67,6 +85,7 @@ def root() -> dict:
         "docs": "/docs",
         "health": "/api/health",
         "parse": "POST /api/parse",
+        "search": "GET /api/search",
         "documents": "GET /api/documents",
         "tasks": "GET /api/tasks",
         "companies": "GET/POST /api/companies",
