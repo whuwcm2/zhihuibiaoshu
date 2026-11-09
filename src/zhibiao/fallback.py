@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pymupdf
+from langsmith import traceable
 
 from .models import Block
 
 
+@traceable(name="pymupdf.parse", run_type="tool")
 def parse_with_pymupdf(pdf_path: Path, out_dir: Path) -> tuple[Path, list[Block]]:
     """MinerU 不可用时的兜底解析：逐页提取文本并生成 Markdown。
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import replace
 from pathlib import Path
 
 from .config import get_settings
+from .extractor import extract_document
 from .pipeline import ingest_pdf, search
 
 
@@ -29,28 +31,45 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("-n", "--n-results", type=int, default=5, help="返回条数")
     search.add_argument("--collection", default=None, help="覆盖 Chroma collection 名称")
 
+    extract = sub.add_parser(
+        "extract",
+        help="结构化抽取项目概况、评标办法、前附表、资格审查、格式清单、时间节点",
+    )
+    extract.add_argument("pdf", type=Path, help="已入库的 PDF 文件")
+    extract.add_argument("--output-dir", type=Path, default=None, help="输出目录（默认解析缓存目录）")
+    extract.add_argument("--refresh", action="store_true", help="忽略抽取分片缓存，重新调用 LLM")
+
     return parser
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = get_settings()
-    if getattr(args, "collection", None):
-        settings = replace(settings, chroma_collection=args.collection)
+    try:
+        settings = get_settings()
+        if getattr(args, "collection", None):
+            settings = replace(settings, chroma_collection=args.collection)
 
-    if args.command == "ingest":
-        ingest_pdf(
-            pdf_path=Path(args.pdf),
-            settings=settings,
-            parser=args.parser,
-            reparse=args.reparse,
-            max_chars=args.max_chars,
-            overlap=args.overlap,
-            dry_run=args.dry_run,
-        )
-    elif args.command == "search":
-        search(args.query, settings, n_results=args.n_results)
+        if args.command == "ingest":
+            ingest_pdf(
+                pdf_path=Path(args.pdf),
+                settings=settings,
+                parser=args.parser,
+                reparse=args.reparse,
+                max_chars=args.max_chars,
+                overlap=args.overlap,
+                dry_run=args.dry_run,
+            )
+        elif args.command == "search":
+            search(args.query, settings, n_results=args.n_results)
+        elif args.command == "extract":
+            extract_document(
+                Path(args.pdf), settings, output_dir=args.output_dir, refresh=args.refresh
+            )
+    except Exception as exc:  # noqa: BLE001 - CLI 统一转换为退出码
+        print(f"错误: {exc}", file=sys.stderr, flush=True)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -19,3 +19,7 @@ frontend/node_modules/
 .npm-cache
 chroma_db/
 data/parsed/
+data/bids/
+
+# Bidder input (may contain company-specific data)
+bidder_profile.json

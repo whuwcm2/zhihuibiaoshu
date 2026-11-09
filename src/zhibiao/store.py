@@ -4,6 +4,7 @@ from pathlib import Path
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
+from langsmith import traceable
 
 from .models import Chunk
 
@@ -24,6 +25,7 @@ class ChunkStore:
             configuration={"hnsw": {"space": "cosine"}},
         )
 
+    @traceable(name="chroma.replace_document", run_type="tool")
     def replace_document(
         self,
         doc_id: str,
@@ -66,6 +68,7 @@ class ChunkStore:
             )
         return len(chunks)
 
+    @traceable(name="chroma.query", run_type="retriever")
     def query(
         self,
         embedding: list[float],

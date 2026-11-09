@@ -1,0 +1,72 @@
+{
+  "company_name": "【待填写】",
+  "legal_representative": "【待填写】",
+  "registered_address": "【待填写】",
+  "contact_person": "【待填写】",
+  "contact_phone": "【待填写】",
+  "email": "【待填写】",
+  "business_license_no": "【待填写】",
+  "registered_capital": "【待填写】",
+  "established_date": "【待填写】",
+  "qualification": {
+    "name": "【待填写】",
+    "grade": "【待填写】",
+    "certificate_no": "【待填写】",
+    "valid_until": "【待填写】"
+  },
+  "safety_license": {
+    "certificate_no": "【待填写】",
+    "valid_until": "【待填写】"
+  },
+  "similar_projects": [
+    {
+      "project_name": "【待填写】",
+      "owner": "【待填写】",
+      "amount": "【待填写】",
+      "start_date": "【待填写】",
+      "end_date": "【待填写】",
+      "role": "【待填写】",
+      "certificate": "【待填写】"
+    }
+  ],
+  "personnel": {
+    "project_manager": {
+      "name": "【待填写】",
+      "certificate": "【待填写】",
+      "title": "【待填写】",
+      "phone": "【待填写】"
+    },
+    "technical_lead": {
+      "name": "【待填写】",
+      "certificate": "【待填写】",
+      "title": "【待填写】"
+    },
+    "quality_manager": {
+      "name": "【待填写】",
+      "certificate": "【待填写】",
+      "title": "【待填写】"
+    },
+    "safety_manager": {
+      "name": "【待填写】",
+      "certificate": "【待填写】",
+      "title": "【待填写】"
+    }
+  },
+  "financial": {
+    "years": ["【待填写】", "【待填写】", "【待填写】"],
+    "revenue": ["【待填写】", "【待填写】", "【待填写】"],
+    "net_profit": ["【待填写】", "【待填写】", "【待填写】"],
+    "audit_agency": "【待填写】"
+  },
+  "credit": {
+    "rating": "【待填写】",
+    "certificates": ["【待填写】"]
+  },
+  "management_systems": ["【待填写】"],
+  "bid_bond": {
+    "method": "【待填写】",
+    "amount": "【待填写】",
+    "valid_until": "【待填写】"
+  },
+  "other": {}
+}

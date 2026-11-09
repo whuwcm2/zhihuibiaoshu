@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+from langsmith import traceable
 from zai import ZhipuAiClient
 
 MAX_INPUT_CHARS = 6000
@@ -29,6 +30,7 @@ class ZhipuEmbedder:
         self.dimensions = dimensions
         self.batch_size = max(1, batch_size)
 
+    @traceable(name="zhipu.embed_documents", run_type="embedding")
     def embed_documents(
         self,
         texts: list[str],
@@ -43,6 +45,7 @@ class ZhipuEmbedder:
                 progress(min(start + len(batch), total), total)
         return vectors
 
+    @traceable(name="zhipu.embed_query", run_type="embedding")
     def embed_query(self, query: str) -> list[float]:
         return self._embed_batch([self._prepare(query)])[0]
 

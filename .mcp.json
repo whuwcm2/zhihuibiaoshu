@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "tools/postgres_mcp.py"
+      ]
+    }
+  }
+}

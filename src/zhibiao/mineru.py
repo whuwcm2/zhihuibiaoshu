@@ -8,6 +8,7 @@ from pathlib import Path
 
 import httpx
 import pymupdf
+from langsmith import traceable
 
 from .config import Settings
 
@@ -42,6 +43,7 @@ class MinerUResult:
     combined_markdown: Path
 
 
+@traceable(name="mineru.split_pdf", run_type="tool")
 def split_pdf(pdf_path: Path, out_dir: Path) -> list[PdfPart]:
     """MinerU 单文件最多 200 页，超出时用 PyMuPDF 本地拆分。"""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -84,6 +86,7 @@ class MinerUCloudParser:
             "Accept": "*/*",
         }
 
+    @traceable(name="mineru.parse", run_type="tool")
     def parse(self, pdf_path: Path, doc_id: str, doc_dir: Path) -> MinerUResult:
         parts_dir = doc_dir / "parts"
         parts = split_pdf(pdf_path, parts_dir)
